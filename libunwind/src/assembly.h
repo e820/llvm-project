@@ -67,10 +67,22 @@
 #define SEPARATOR ;
 #endif
 
-#if defined(__powerpc64__) && (!defined(_CALL_ELF) || _CALL_ELF == 1) &&       \
+#if defined(__powerpc64__) && defined(__CELLOS_LV2__)
+// CellOS Lv-2: 8-byte function descriptors {u32 entry, u32 TOC base}, and the
+// code is entered through a ".name" symbol that direct calls branch to.
+#define PPC64_OPD1 .section .opd,"aw",@progbits SEPARATOR .p2align 3 SEPARATOR
+#define PPC64_OPD2(name) SEPARATOR \
+  .long .name SEPARATOR \
+  .long .TOC. SEPARATOR \
+  .text SEPARATOR \
+  .globl .name SEPARATOR \
+  .hidden .name SEPARATOR \
+  .type .name,@function SEPARATOR \
+.name:
+#elif defined(__powerpc64__) && (!defined(_CALL_ELF) || _CALL_ELF == 1) &&     \
     !defined(_AIX)
 #define PPC64_OPD1 .section .opd,"aw",@progbits SEPARATOR
-#define PPC64_OPD2 SEPARATOR \
+#define PPC64_OPD2(name) SEPARATOR \
   .p2align 3 SEPARATOR \
   .quad .Lfunc_begin0 SEPARATOR \
   .quad .TOC.@tocbase SEPARATOR \
@@ -79,7 +91,7 @@
 .Lfunc_begin0:
 #else
 #define PPC64_OPD1
-#define PPC64_OPD2
+#define PPC64_OPD2(name)
 #endif
 
 #if defined(__aarch64__)
@@ -170,6 +182,15 @@
   EXPORT_SYMBOL(SYMBOL_NAME(aliasname)) SEPARATOR                              \
   WEAK_SYMBOL(SYMBOL_NAME(aliasname)) SEPARATOR                                \
   .equiv SYMBOL_NAME(aliasname), SYMBOL_NAME(name)
+#elif defined(__powerpc64__) && defined(__CELLOS_LV2__)
+// Alias both the descriptor and the ".name" entry symbol (see PPC64_OPD2).
+#define WEAK_ALIAS(name, aliasname)                                            \
+  EXPORT_SYMBOL(SYMBOL_NAME(aliasname)) SEPARATOR                              \
+  WEAK_SYMBOL(SYMBOL_NAME(aliasname)) SEPARATOR                                \
+  SYMBOL_NAME(aliasname) = SYMBOL_NAME(name) SEPARATOR                         \
+  EXPORT_SYMBOL(.aliasname) SEPARATOR                                          \
+  WEAK_SYMBOL(.aliasname) SEPARATOR                                            \
+  .aliasname = .name
 #else
 #define WEAK_ALIAS(name, aliasname)                                            \
   EXPORT_SYMBOL(SYMBOL_NAME(aliasname)) SEPARATOR                              \
@@ -280,7 +301,7 @@ aliasname:                                                                     \
   SYMBOL_IS_FUNC(SYMBOL_NAME(name)) SEPARATOR                                  \
   PPC64_OPD1                                                                   \
   SYMBOL_NAME(name):                                                           \
-  PPC64_OPD2                                                                   \
+  PPC64_OPD2(SYMBOL_NAME(name))                                                \
   AARCH64_BTI
 #endif
 

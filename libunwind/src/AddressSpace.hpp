@@ -224,7 +224,9 @@ inline uintptr_t LocalAddressSpace::getP(pint_t addr) {
 }
 
 inline uint64_t LocalAddressSpace::getRegister(pint_t addr) {
-#if __SIZEOF_POINTER__ == 8 || defined(__mips64)
+  // Saved registers are register-sized, which on mips64 n32 and on 64-bit
+  // PowerPC with 32-bit pointers (CellOS Lv-2) is wider than a pointer.
+#if __SIZEOF_POINTER__ == 8 || defined(__mips64) || defined(__powerpc64__)
   return get64(addr);
 #else
   return get32(addr);
