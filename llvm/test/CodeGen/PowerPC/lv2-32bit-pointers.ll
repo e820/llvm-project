@@ -5,32 +5,57 @@
 ; RUN: llc -verify-machineinstrs -O0 -mtriple=powerpc64-unknown-lv2 < %s | FileCheck %s --check-prefix=O0
 ; RUN: llc -verify-machineinstrs -mtriple=powerpc64-unknown-lv2 -filetype=obj < %s | \
 ; RUN:   llvm-readobj -r - | FileCheck %s --check-prefix=RELOC
+; RUN: llc -verify-machineinstrs -mtriple=powerpc64-unknown-lv2 -code-model=small \
+; RUN:   -filetype=obj < %s | llvm-readobj -r - | FileCheck %s --check-prefix=SMALL
 
 @g = external constant [7 x i8]
+@h = external global i32
 @gp = global ptr @g
 
+; Data pointers and TOC entries are 4-byte words.
 ; RELOC:      Section ({{[0-9]+}}) .rela.data {
 ; RELOC-NEXT:   0x0 R_PPC64_ADDR32 g 0x0
 ; RELOC-NEXT: }
 ; RELOC:      Section ({{[0-9]+}}) .rela.toc {
-; RELOC-NEXT:   0x0 R_PPC64_ADDR64 g 0x0
+; RELOC-NEXT:   0x0 R_PPC64_ADDR32 g 0x0
+; RELOC-NEXT:   0x4 R_PPC64_ADDR32 h 0x0
 ; RELOC-NEXT: }
+
+; Small code model: lwz rD, .LCn@toc(r2) uses the D-form TOC16 relocation.
+; SMALL:      Section ({{[0-9]+}}) .rela.text {
+; SMALL-NEXT:   0x2 R_PPC64_TOC16 .toc 0x0
+; SMALL-NEXT:   0x1A R_PPC64_TOC16 .toc 0x4
 
 define { ptr, i64 } @ret_global() {
 ; CHECK-LABEL: ret_global:
 ; CHECK:       # %bb.0:
 ; CHECK-NEXT:    addis 3, 2, .LC0@toc@ha
 ; CHECK-NEXT:    li 4, 6
-; CHECK-NEXT:    ld 3, .LC0@toc@l(3)
+; CHECK-NEXT:    lwz 3, .LC0@toc@l(3)
 ; CHECK-NEXT:    blr
 ;
 ; O0-LABEL: ret_global:
 ; O0:       # %bb.0:
 ; O0-NEXT:    addis 3, 2, .LC0@toc@ha
-; O0-NEXT:    ld 3, .LC0@toc@l(3)
+; O0-NEXT:    lwz 3, .LC0@toc@l(3)
 ; O0-NEXT:    li 4, 6
 ; O0-NEXT:    blr
   ret { ptr, i64 } { ptr @g, i64 6 }
+}
+
+define ptr @addr_h() {
+; CHECK-LABEL: addr_h:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    addis 3, 2, .LC1@toc@ha
+; CHECK-NEXT:    lwz 3, .LC1@toc@l(3)
+; CHECK-NEXT:    blr
+;
+; O0-LABEL: addr_h:
+; O0:       # %bb.0:
+; O0-NEXT:    addis 3, 2, .LC1@toc@ha
+; O0-NEXT:    lwz 3, .LC1@toc@l(3)
+; O0-NEXT:    blr
+  ret ptr @h
 }
 
 define ptr @load_ptr(ptr %p) {

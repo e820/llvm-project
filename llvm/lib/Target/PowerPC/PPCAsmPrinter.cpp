@@ -522,6 +522,12 @@ static void setOptionalCodeModel(MCSymbolXCOFF *XSym, CodeModel::Model CM) {
   }
 }
 
+/// 64-bit ELF targets with 32-bit pointers (CellOS LV2) use 4-byte TOC
+/// entries, which are loaded with a zero-extending lwz instead of ld.
+static bool hasWordTOCEntries(const Triple &TT, const DataLayout &DL) {
+  return TT.isPPC64() && TT.isOSBinFormatELF() && DL.getPointerSize() == 4;
+}
+
 /// lookUpOrCreateTOCEntry -- Given a symbol, look up whether a TOC entry
 /// exists for it.  If not, create one.  Then return a symbol that references
 /// the TOC entry.
@@ -1143,8 +1149,10 @@ void PPCAsmPrinter::emitInstruction(const MachineInstr *MI) {
     // Transform %x3 = LDtoc @min1, %x2
     LowerPPCMachineInstrToMCInst(MI, TmpInst, *this);
 
-    // Change the opcode to LD.
-    TmpInst.setOpcode(PPC::LD);
+    // Change the opcode to LD, or LWZ8 for 4-byte TOC entries.
+    TmpInst.setOpcode(hasWordTOCEntries(TM.getTargetTriple(), getDataLayout())
+                          ? PPC::LWZ8
+                          : PPC::LD);
 
     const MachineOperand &MO = MI->getOperand(1);
     assert((MO.isGlobal() || MO.isCPI() || MO.isJTI() || MO.isBlockAddress()) &&
@@ -1315,8 +1323,11 @@ void PPCAsmPrinter::emitInstruction(const MachineInstr *MI) {
     PPCMCExpr::Specifier VK = getSpecifier(MO);
     CodeModel::Model CM =
         IsAIX ? getCodeModel(*Subtarget, TM, MO) : TM.getCodeModel();
-    if (!MO.isCPI() || CM == CodeModel::Large)
+    if (!MO.isCPI() || CM == CodeModel::Large) {
       MOSymbol = lookUpOrCreateTOCEntry(MOSymbol, getTOCEntryTypeForMO(MO), VK);
+      if (hasWordTOCEntries(TM.getTargetTriple(), getDataLayout()))
+        TmpInst.setOpcode(PPC::LWZ8);
+    }
 
     VK = IsAIX ? PPC::S_L : PPC::S_TOC_LO;
     const MCExpr *Exp = symbolWithSpecifier(MOSymbol, VK);
@@ -2068,7 +2079,9 @@ void PPCLinuxAsmPrinter::emitEndOfAsmFile(Module &M) {
     MCSectionELF *Section = OutContext.getELFSection(
         Name, ELF::SHT_PROGBITS, ELF::SHF_WRITE | ELF::SHF_ALLOC);
     OutStreamer->switchSection(Section);
-    if (!isPPC64)
+    const bool WordEntries =
+        hasWordTOCEntries(TM.getTargetTriple(), M.getDataLayout());
+    if (!isPPC64 || WordEntries)
       OutStreamer->emitValueToAlignment(Align(4));
 
     for (const auto &TOCMapPair : TOC) {
@@ -2076,7 +2089,7 @@ void PPCLinuxAsmPrinter::emitEndOfAsmFile(Module &M) {
       MCSymbol *const TOCEntryLabel = TOCMapPair.second;
 
       OutStreamer->emitLabel(TOCEntryLabel);
-      if (isPPC64)
+      if (isPPC64 && !WordEntries)
         TS->emitTCEntry(*TOCEntryTarget, TOCMapPair.first.second);
       else
         OutStreamer->emitSymbolValue(TOCEntryTarget, 4);

@@ -3081,8 +3081,11 @@ SDValue PPCTargetLowering::getTOCEntry(SelectionDAG &DAG, const SDLoc &dl,
                     ? DAG.getRegister(PPC::R2, VT)
                     : DAG.getNode(PPCISD::GlobalBaseReg, dl, VT);
   SDValue Ops[] = { GA, Reg };
+  // A TOC entry holds an in-memory pointer, which is 4 bytes when 64-bit ELF
+  // uses 32-bit pointers (CellOS LV2).
   return DAG.getMemIntrinsicNode(
-      PPCISD::TOC_ENTRY, dl, DAG.getVTList(VT, MVT::Other), Ops, VT,
+      PPCISD::TOC_ENTRY, dl, DAG.getVTList(VT, MVT::Other), Ops,
+      getPointerMemTy(DAG.getDataLayout()),
       MachinePointerInfo::getGOT(DAG.getMachineFunction()), std::nullopt,
       MachineMemOperand::MOLoad);
 }

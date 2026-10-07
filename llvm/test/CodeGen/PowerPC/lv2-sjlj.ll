@@ -8,7 +8,7 @@
 
 define i32 @sjlj_setjmp() {
 ; CHECK-LABEL: sjlj_setjmp:
-; CHECK:       ld [[BUF:[0-9]+]], .LC{{[0-9]+}}@toc@l(
+; CHECK:       lwz [[BUF:[0-9]+]], .LC{{[0-9]+}}@toc@l(
 ; CHECK-DAG:   stw 2, 12([[BUF]])
 ; CHECK-DAG:   stw 1, 16([[BUF]])
 ; CHECK:       bcl 20, 31, [[MAIN:\.LBB[0-9_]+]]
@@ -25,7 +25,7 @@ define i32 @sjlj_setjmp() {
 
 define void @sjlj_longjmp() {
 ; CHECK-LABEL: sjlj_longjmp:
-; CHECK:       ld [[BUF:[0-9]+]], .LC{{[0-9]+}}@toc@l(
+; CHECK:       lwz [[BUF:[0-9]+]], .LC{{[0-9]+}}@toc@l(
 ; CHECK-DAG:   lwz 31, 0([[BUF]])
 ; CHECK-DAG:   lwz [[IP:[0-9]+]], 4([[BUF]])
 ; CHECK-DAG:   lwz 1, 8([[BUF]])
