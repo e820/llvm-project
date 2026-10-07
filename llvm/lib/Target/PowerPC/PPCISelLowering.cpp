@@ -655,7 +655,11 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
     AddPromotedToType(ISD::VAARG, MVT::i16, MVT::i64);
     setOperationAction(ISD::VAARG, MVT::i32, Promote);
     AddPromotedToType(ISD::VAARG, MVT::i32, MVT::i64);
-    setOperationAction(ISD::VAARG, MVT::Other, Expand);
+    // With 32-bit pointers (CellOS LV2) the va_list pointer in memory is
+    // narrower than the DAG pointer type, so the generic expansion of VAARG
+    // and VACOPY (which loads/stores a full PtrVT) cannot be used.
+    setOperationAction(ISD::VAARG, MVT::Other,
+                       TM.getPointerSize(0) == 4 ? Custom : Expand);
   } else if (Subtarget.is32BitELFABI()) {
     // VAARG is custom lowered with the 32-bit SVR4 ABI.
     setOperationAction(ISD::VAARG, MVT::Other, Custom);
@@ -663,8 +667,10 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
   } else
     setOperationAction(ISD::VAARG, MVT::Other, Expand);
 
-  // VACOPY is custom lowered with the 32-bit SVR4 ABI.
-  if (Subtarget.is32BitELFABI())
+  // VACOPY is custom lowered with the 32-bit SVR4 ABI and with 32-bit pointers
+  // on 64-bit ELF.
+  if (Subtarget.is32BitELFABI() ||
+      (Subtarget.is64BitELFABI() && TM.getPointerSize(0) == 4))
     setOperationAction(ISD::VACOPY            , MVT::Other, Custom);
   else
     setOperationAction(ISD::VACOPY            , MVT::Other, Expand);
@@ -1698,6 +1704,12 @@ bool PPCTargetLowering::useSoftFloat() const {
 
 bool PPCTargetLowering::hasSPE() const {
   return Subtarget.hasSPE();
+}
+
+MVT PPCTargetLowering::getPointerTy(const DataLayout &DL, uint32_t AS) const {
+  if (Subtarget.isPPC64())
+    return MVT::i64;
+  return TargetLowering::getPointerTy(DL, AS);
 }
 
 bool PPCTargetLowering::preferIncOfAddToSubOfNot(EVT VT) const {
@@ -3731,7 +3743,35 @@ SDValue PPCTargetLowering::LowerVAARG(SDValue Op, SelectionDAG &DAG) const {
   const Value *SV = cast<SrcValueSDNode>(Node->getOperand(2))->getValue();
   SDLoc dl(Node);
 
-  assert(!Subtarget.isPPC64() && "LowerVAARG is PPC32 only");
+  if (Subtarget.isPPC64()) {
+    // 64-bit ELF with 32-bit pointers: va_list is a single pointer into the
+    // doubleword-slotted parameter save area, as in the generic expansion, but
+    // it is only PtrMemVT wide in memory.
+    const DataLayout &DL = DAG.getDataLayout();
+    EVT PtrMemVT = getPointerMemTy(DL);
+    SDValue VAList =
+        DAG.getExtLoad(ISD::ZEXTLOAD, dl, PtrVT, InChain, VAListPtr,
+                       MachinePointerInfo(SV), PtrMemVT);
+    InChain = VAList.getValue(1);
+
+    MaybeAlign MA(Node->getConstantOperandVal(3));
+    if (MA && *MA > getMinStackArgumentAlignment()) {
+      VAList = DAG.getNode(ISD::ADD, dl, PtrVT, VAList,
+                           DAG.getConstant(MA->value() - 1, dl, PtrVT));
+      VAList =
+          DAG.getNode(ISD::AND, dl, PtrVT, VAList,
+                      DAG.getSignedConstant(-(int64_t)MA->value(), dl, PtrVT));
+    }
+
+    SDValue NextVAList =
+        DAG.getNode(ISD::ADD, dl, PtrVT, VAList,
+                    DAG.getConstant(DL.getTypeAllocSize(
+                                        VT.getTypeForEVT(*DAG.getContext())),
+                                    dl, PtrVT));
+    InChain = DAG.getTruncStore(InChain, dl, NextVAList, VAListPtr,
+                                MachinePointerInfo(SV), PtrMemVT);
+    return DAG.getLoad(VT, dl, InChain, VAList, MachinePointerInfo());
+  }
 
   // gpr_index
   SDValue GprIndex = DAG.getExtLoad(ISD::ZEXTLOAD, dl, MVT::i32, InChain,
@@ -3822,7 +3862,16 @@ SDValue PPCTargetLowering::LowerVAARG(SDValue Op, SelectionDAG &DAG) const {
 }
 
 SDValue PPCTargetLowering::LowerVACOPY(SDValue Op, SelectionDAG &DAG) const {
-  assert(!Subtarget.isPPC64() && "LowerVACOPY is PPC32 only");
+  if (Subtarget.isPPC64()) {
+    // 64-bit ELF with 32-bit pointers: va_list is a single PtrMemVT pointer.
+    EVT PtrMemVT = getPointerMemTy(DAG.getDataLayout());
+    const Value *DstSV = cast<SrcValueSDNode>(Op.getOperand(3))->getValue();
+    const Value *SrcSV = cast<SrcValueSDNode>(Op.getOperand(4))->getValue();
+    SDValue VAList = DAG.getLoad(PtrMemVT, SDLoc(Op), Op.getOperand(0),
+                                 Op.getOperand(2), MachinePointerInfo(SrcSV));
+    return DAG.getStore(VAList.getValue(1), SDLoc(Op), VAList, Op.getOperand(1),
+                        MachinePointerInfo(DstSV));
+  }
 
   // We have to copy the entire va_list struct:
   // 2*sizeof(char) + 2 Byte alignment + 2*sizeof(char*) = 12 Byte
@@ -3989,6 +4038,8 @@ SDValue PPCTargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
     // vastart just stores the address of the VarArgsFrameIndex slot into the
     // memory location argument.
     SDValue FR = DAG.getFrameIndex(FuncInfo->getVarArgsFrameIndex(), PtrVT);
+    // va_list is a pointer in memory, which may be narrower than PtrVT.
+    FR = DAG.getZExtOrTrunc(FR, dl, getPointerMemTy(MF.getDataLayout()));
     const Value *SV = cast<SrcValueSDNode>(Op.getOperand(2))->getValue();
     return DAG.getStore(Op.getOperand(0), dl, FR, Op.getOperand(1),
                         MachinePointerInfo(SV));
@@ -13793,9 +13844,13 @@ PPCTargetLowering::emitEHSjLjSetJmp(MachineInstr &MI,
   // identifier (R13) is not affected.
 
   // thisMBB:
-  const int64_t LabelOffset = 1 * PVT.getStoreSize();
-  const int64_t TOCOffset   = 3 * PVT.getStoreSize();
-  const int64_t BPOffset    = 4 * PVT.getStoreSize();
+  // Buffer slots are pointer-sized in memory, which with 32-bit pointers on a
+  // 64-bit subtarget (CellOS LV2) is narrower than the saved registers.
+  const int64_t SlotSize = getPointerMemTy(MF->getDataLayout()).getStoreSize();
+  const unsigned Store64 = SlotSize == 8 ? PPC::STD : PPC::STW8;
+  const int64_t LabelOffset = 1 * SlotSize;
+  const int64_t TOCOffset = 3 * SlotSize;
+  const int64_t BPOffset = 4 * SlotSize;
 
   // Prepare IP either in reg.
   const TargetRegisterClass *PtrRC = getRegClassFor(PVT);
@@ -13804,7 +13859,7 @@ PPCTargetLowering::emitEHSjLjSetJmp(MachineInstr &MI,
 
   if (Subtarget.is64BitELFABI()) {
     setUsesTOCBasePtr(*MBB->getParent());
-    MIB = BuildMI(*thisMBB, MI, DL, TII->get(PPC::STD))
+    MIB = BuildMI(*thisMBB, MI, DL, TII->get(Store64))
               .addReg(PPC::X2)
               .addImm(TOCOffset)
               .addReg(BufReg)
@@ -13820,7 +13875,7 @@ PPCTargetLowering::emitEHSjLjSetJmp(MachineInstr &MI,
     BaseReg = Subtarget.isPPC64() ? PPC::BP8 : PPC::BP;
 
   MIB = BuildMI(*thisMBB, MI, DL,
-                TII->get(Subtarget.isPPC64() ? PPC::STD : PPC::STW))
+                TII->get(Subtarget.isPPC64() ? Store64 : PPC::STW))
             .addReg(BaseReg)
             .addImm(BPOffset)
             .addReg(BufReg)
@@ -13847,10 +13902,10 @@ PPCTargetLowering::emitEHSjLjSetJmp(MachineInstr &MI,
 
   // Store IP
   if (Subtarget.isPPC64()) {
-    MIB = BuildMI(mainMBB, DL, TII->get(PPC::STD))
-            .addReg(LabelReg)
-            .addImm(LabelOffset)
-            .addReg(BufReg);
+    MIB = BuildMI(mainMBB, DL, TII->get(Store64))
+              .addReg(LabelReg)
+              .addImm(LabelOffset)
+              .addReg(BufReg);
   } else {
     MIB = BuildMI(mainMBB, DL, TII->get(PPC::STW))
             .addReg(LabelReg)
@@ -13899,10 +13954,13 @@ PPCTargetLowering::emitEHSjLjLongJmp(MachineInstr &MI,
 
   MachineInstrBuilder MIB;
 
-  const int64_t LabelOffset = 1 * PVT.getStoreSize();
-  const int64_t SPOffset    = 2 * PVT.getStoreSize();
-  const int64_t TOCOffset   = 3 * PVT.getStoreSize();
-  const int64_t BPOffset    = 4 * PVT.getStoreSize();
+  // Buffer slots are pointer-sized in memory; see emitEHSjLjSetJmp.
+  const int64_t SlotSize = getPointerMemTy(MF->getDataLayout()).getStoreSize();
+  const unsigned Load64 = SlotSize == 8 ? PPC::LD : PPC::LWZ8;
+  const int64_t LabelOffset = 1 * SlotSize;
+  const int64_t SPOffset = 2 * SlotSize;
+  const int64_t TOCOffset = 3 * SlotSize;
+  const int64_t BPOffset = 4 * SlotSize;
 
   Register BufReg = MI.getOperand(0).getReg();
 
@@ -13910,9 +13968,7 @@ PPCTargetLowering::emitEHSjLjLongJmp(MachineInstr &MI,
   // frame pointer, and if so, then its r31 will be restored
   // as necessary).
   if (PVT == MVT::i64) {
-    MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LD), FP)
-            .addImm(0)
-            .addReg(BufReg);
+    MIB = BuildMI(*MBB, MI, DL, TII->get(Load64), FP).addImm(0).addReg(BufReg);
   } else {
     MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LWZ), FP)
             .addImm(0)
@@ -13922,9 +13978,9 @@ PPCTargetLowering::emitEHSjLjLongJmp(MachineInstr &MI,
 
   // Reload IP
   if (PVT == MVT::i64) {
-    MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LD), Tmp)
-            .addImm(LabelOffset)
-            .addReg(BufReg);
+    MIB = BuildMI(*MBB, MI, DL, TII->get(Load64), Tmp)
+              .addImm(LabelOffset)
+              .addReg(BufReg);
   } else {
     MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LWZ), Tmp)
             .addImm(LabelOffset)
@@ -13934,9 +13990,9 @@ PPCTargetLowering::emitEHSjLjLongJmp(MachineInstr &MI,
 
   // Reload SP
   if (PVT == MVT::i64) {
-    MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LD), SP)
-            .addImm(SPOffset)
-            .addReg(BufReg);
+    MIB = BuildMI(*MBB, MI, DL, TII->get(Load64), SP)
+              .addImm(SPOffset)
+              .addReg(BufReg);
   } else {
     MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LWZ), SP)
             .addImm(SPOffset)
@@ -13946,9 +14002,9 @@ PPCTargetLowering::emitEHSjLjLongJmp(MachineInstr &MI,
 
   // Reload BP
   if (PVT == MVT::i64) {
-    MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LD), BP)
-            .addImm(BPOffset)
-            .addReg(BufReg);
+    MIB = BuildMI(*MBB, MI, DL, TII->get(Load64), BP)
+              .addImm(BPOffset)
+              .addReg(BufReg);
   } else {
     MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LWZ), BP)
             .addImm(BPOffset)
@@ -13959,7 +14015,7 @@ PPCTargetLowering::emitEHSjLjLongJmp(MachineInstr &MI,
   // Reload TOC
   if (PVT == MVT::i64 && Subtarget.isSVR4ABI()) {
     setUsesTOCBasePtr(*MBB->getParent());
-    MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LD), PPC::X2)
+    MIB = BuildMI(*MBB, MI, DL, TII->get(Load64), PPC::X2)
               .addImm(TOCOffset)
               .addReg(BufReg)
               .cloneMemRefs(MI);

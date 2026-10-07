@@ -2465,9 +2465,11 @@ namespace llvm {
 FastISel *PPC::createFastISel(FunctionLoweringInfo &FuncInfo,
                               const TargetLibraryInfo *LibInfo,
                               const LibcallLoweringInfo *LibcallLowering) {
-  // Only available on 64-bit for now.
+  // Only available on 64-bit for now, and not for 32-bit pointers (CellOS
+  // LV2), where pointers in memory are narrower than the DAG pointer type.
   const PPCSubtarget &Subtarget = FuncInfo.MF->getSubtarget<PPCSubtarget>();
-  if (Subtarget.isPPC64())
+  if (Subtarget.isPPC64() &&
+      FuncInfo.MF->getDataLayout().getPointerSizeInBits() == 64)
     return new PPCFastISel(FuncInfo, LibInfo, LibcallLowering);
   return nullptr;
 }

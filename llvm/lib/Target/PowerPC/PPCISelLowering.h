@@ -214,6 +214,12 @@ namespace llvm {
 
     bool hasSPE() const;
 
+    /// On 64-bit subtargets pointers always live in 64-bit GPRs, even when
+    /// the data layout uses 32-bit pointers (CellOS LV2). Keep the DAG pointer
+    /// type at register width; SelectionDAG zero-extends / truncates through
+    /// getPointerMemTy() when pointers are loaded from or stored to memory.
+    MVT getPointerTy(const DataLayout &DL, uint32_t AS = 0) const override;
+
     MVT getScalarShiftAmountTy(const DataLayout &, EVT) const override {
       return MVT::i32;
     }

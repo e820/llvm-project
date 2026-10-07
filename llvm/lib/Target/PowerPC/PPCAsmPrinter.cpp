@@ -432,7 +432,7 @@ bool PPCAsmPrinter::PrintAsmMemoryOperand(const MachineInstr *MI, unsigned OpNo,
     switch (ExtraCode[0]) {
     default: return true;  // Unknown modifier.
     case 'L': // A memory reference to the upper word of a double word op.
-      O << getDataLayout().getPointerSize() << "(";
+      O << (Subtarget->isPPC64() ? 8 : 4) << "(";
       printOperand(MI, OpNo, O);
       O << ")";
       return false;
@@ -2048,9 +2048,7 @@ void PPCLinuxAsmPrinter::emitFunctionEntryLabel() {
 }
 
 void PPCLinuxAsmPrinter::emitEndOfAsmFile(Module &M) {
-  const DataLayout &DL = getDataLayout();
-
-  bool isPPC64 = DL.getPointerSizeInBits() == 64;
+  bool isPPC64 = static_cast<const PPCTargetMachine &>(TM).isPPC64();
 
   PPCTargetStreamer *TS =
       static_cast<PPCTargetStreamer *>(OutStreamer->getTargetStreamer());
