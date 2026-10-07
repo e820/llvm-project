@@ -1432,8 +1432,12 @@ void PPC64::relocate(uint8_t *loc, const Relocation &rel, uint64_t val) const {
   case R_PPC64_GOT_TLSLD16:
   case R_PPC64_TOC16:
   case R_PPC64_DTPREL16: // semantically subtracts DTP offset (== tocOffset)
+    // These are signed displacements (e.g. "lwz 3, sym@toc(2)"), unlike
+    // R_PPC64_ADDR16, which may also hold an unsigned 16-bit value.
     val -= ppc64TocOffset;
-    [[fallthrough]];
+    checkInt(ctx, loc, val, 16, rel);
+    write16(ctx, loc, val);
+    break;
   case R_PPC64_ADDR16:
     checkIntUInt(ctx, loc, val, 16, rel);
     write16(ctx, loc, val);
