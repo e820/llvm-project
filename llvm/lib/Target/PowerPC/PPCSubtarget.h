@@ -261,10 +261,18 @@ public:
     return isAIXABI() || (is64BitELFABI() && !isELFv2ABI());
   }
 
+  /// True for CellOS LV2 (PS3 PPU), whose function descriptors are 8 bytes,
+  /// {u32 entry, u32 TOC base}, with no environment pointer. Function code is
+  /// entered through a separate dot-symbol (".foo"); direct calls branch to it
+  /// while "foo" names the descriptor.
+  bool usesCompactFunctionDescriptors() const {
+    return is64BitELFABI() && getTargetTriple().getOS() == Triple::Lv2;
+  }
+
   unsigned descriptorTOCAnchorOffset() const {
     assert(usesFunctionDescriptors() &&
            "Should only be called when the target uses descriptors.");
-    return IsPPC64 ? 8 : 4;
+    return IsPPC64 && !usesCompactFunctionDescriptors() ? 8 : 4;
   }
 
   unsigned descriptorEnvironmentPointerOffset() const {

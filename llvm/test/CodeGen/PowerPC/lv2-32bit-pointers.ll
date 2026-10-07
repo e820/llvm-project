@@ -185,7 +185,7 @@ define ptr @vararg(i32 %n, ...) {
 ; CHECK-NEXT:    lwz 3, 124(1)
 ; CHECK-NEXT:    stw 3, 120(1)
 ; CHECK-NEXT:    addi 3, 1, 120
-; CHECK-NEXT:    bl use
+; CHECK-NEXT:    bl .use
 ; CHECK-NEXT:    nop
 ; CHECK-NEXT:    mr 3, 30
 ; CHECK-NEXT:    ld 30, 128(1) # 8-byte Folded Reload
@@ -222,7 +222,7 @@ define ptr @vararg(i32 %n, ...) {
 ; O0-NEXT:    lwz 3, 124(1)
 ; O0-NEXT:    stw 3, 120(1)
 ; O0-NEXT:    addi 3, 1, 120
-; O0-NEXT:    bl use
+; O0-NEXT:    bl .use
 ; O0-NEXT:    nop
 ; O0-NEXT:    ld 3, 112(1) # 8-byte Folded Reload
 ; O0-NEXT:    addi 1, 1, 128

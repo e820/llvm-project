@@ -243,6 +243,7 @@ public:
   void emitEndOfAsmFile(Module &) override;
 
   void emitFunctionEntryLabel() override;
+  void emitGlobalAlias(const Module &M, const GlobalAlias &GA) override;
 
   void emitFunctionBodyStart() override;
   void emitFunctionBodyEnd() override;
@@ -2037,6 +2038,34 @@ void PPCLinuxAsmPrinter::emitFunctionEntryLabel() {
     return AsmPrinter::emitFunctionEntryLabel();
   }
 
+  if (Subtarget->usesCompactFunctionDescriptors()) {
+    // CellOS LV2: an 8-byte descriptor {u32 entry, u32 TOC base} in .opd.
+    // Code is entered through the ".foo" entry symbol, which direct calls
+    // target, so the linker never has to look through the descriptor.
+    MCSectionSubPair Current = OutStreamer->getCurrentSection();
+    OutStreamer->switchSection(OutContext.getELFSection(
+        ".opd", ELF::SHT_PROGBITS, ELF::SHF_WRITE | ELF::SHF_ALLOC));
+    OutStreamer->emitValueToAlignment(Align(8));
+    OutStreamer->emitLabel(CurrentFnSym);
+    OutStreamer->emitValue(
+        MCSymbolRefExpr::create(CurrentFnSymForSize, OutContext), 4);
+    OutStreamer->emitValue(
+        MCSymbolRefExpr::create(OutContext.getOrCreateSymbol(".TOC."),
+                                OutContext),
+        4);
+    OutStreamer->switchSection(Current.first, Current.second);
+
+    const Function &F = MF->getFunction();
+    MCSymbol *EntrySym = getLV2EntryPointSymbol(CurrentFnSym, OutContext);
+    emitLinkage(&F, EntrySym);
+    emitVisibility(EntrySym, F.getVisibility());
+    OutStreamer->emitSymbolAttribute(EntrySym, MCSA_ELF_TypeFunction);
+    OutStreamer->emitLabel(EntrySym);
+    // Gets the function body size through the generic .size emission.
+    CurrentFnBeginLocal = EntrySym;
+    return;
+  }
+
   // Emit an official procedure descriptor.
   MCSectionSubPair Current = OutStreamer->getCurrentSection();
   MCSectionELF *Section = OutStreamer->getContext().getELFSection(
@@ -2056,6 +2085,26 @@ void PPCLinuxAsmPrinter::emitFunctionEntryLabel() {
   // Emit a null environment pointer.
   OutStreamer->emitIntValue(0, 8 /* size */);
   OutStreamer->switchSection(Current.first, Current.second);
+}
+
+void PPCLinuxAsmPrinter::emitGlobalAlias(const Module &M,
+                                         const GlobalAlias &GA) {
+  AsmPrinter::emitGlobalAlias(M, GA);
+
+  // CellOS LV2: an alias of a function also needs an entry symbol, since
+  // direct calls through the alias branch to ".alias".
+  const Triple &TT = TM.getTargetTriple();
+  const auto *F = dyn_cast<Function>(GA.getAliasee()->stripPointerCasts());
+  if (!F || !TT.isPPC64() || TT.getOS() != Triple::Lv2)
+    return;
+  MCSymbol *EntrySym = getLV2EntryPointSymbol(getSymbol(&GA), OutContext);
+  emitLinkage(&GA, EntrySym);
+  emitVisibility(EntrySym, GA.getVisibility());
+  OutStreamer->emitSymbolAttribute(EntrySym, MCSA_ELF_TypeFunction);
+  OutStreamer->emitAssignment(
+      EntrySym,
+      MCSymbolRefExpr::create(getLV2EntryPointSymbol(getSymbol(F), OutContext),
+                              OutContext));
 }
 
 void PPCLinuxAsmPrinter::emitEndOfAsmFile(Module &M) {

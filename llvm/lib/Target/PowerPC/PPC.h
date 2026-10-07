@@ -30,7 +30,9 @@ class MachineInstr;
 class MachineOperand;
 class AsmPrinter;
 class MCInst;
+class MCContext;
 class MCOperand;
+class MCSymbol;
 class ModulePass;
 
 #ifndef NDEBUG
@@ -58,6 +60,9 @@ class ModulePass;
   bool LowerPPCMachineOperandToMCOperand(unsigned MIOpcode,
                                          const MachineOperand &MO,
                                          MCOperand &OutMO, AsmPrinter &AP);
+  /// CellOS LV2: return the dot-symbol (".foo") that names the code entry
+  /// point of the function whose descriptor symbol is \p Descriptor.
+  MCSymbol *getLV2EntryPointSymbol(const MCSymbol *Descriptor, MCContext &Ctx);
 
 #ifndef NDEBUG
   void initializePPCCTRLoopsVerifyPass(PassRegistry&);

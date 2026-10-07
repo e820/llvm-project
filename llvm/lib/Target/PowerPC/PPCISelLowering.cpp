@@ -3950,6 +3950,12 @@ SDValue PPCTargetLowering::LowerINIT_TRAMPOLINE(SDValue Op,
 
   EVT PtrVT = getPointerTy(DAG.getDataLayout());
 
+  // CellOS LV2 function descriptors have no environment pointer, so the ABI
+  // cannot represent nested-function trampolines.
+  if (Subtarget.usesCompactFunctionDescriptors())
+    reportFatalUsageError(
+        "trampolines are not supported by the CellOS LV2 ABI");
+
   if (Subtarget.isAIXABI()) {
     // On AIX we create a trampoline descriptor by combining the
     // entry point and TOC from the global descriptor (FPtr) with the
@@ -5681,25 +5687,26 @@ static void prepareDescriptorIndirectCall(SelectionDAG &DAG, SDValue &Callee,
   const MVT RegVT = Subtarget.getScalarIntVT();
   const Align Alignment = Subtarget.isPPC64() ? Align(8) : Align(4);
 
+  // CellOS LV2 descriptors are two zero-extended 32-bit words and have no
+  // environment pointer.
+  const bool IsCompact = Subtarget.usesCompactFunctionDescriptors();
+  auto LoadField = [&](SDValue Ptr, unsigned Offset) {
+    if (IsCompact)
+      return DAG.getExtLoad(ISD::ZEXTLOAD, dl, RegVT, LDChain, Ptr,
+                            MPI.getWithOffset(Offset), MVT::i32, Align(4),
+                            MMOFlags);
+    return DAG.getLoad(RegVT, dl, LDChain, Ptr, MPI.getWithOffset(Offset),
+                       Alignment, MMOFlags);
+  };
+
   // One load for the functions entry point address.
-  SDValue LoadFuncPtr = DAG.getLoad(RegVT, dl, LDChain, Callee, MPI,
-                                    Alignment, MMOFlags);
+  SDValue LoadFuncPtr = LoadField(Callee, 0);
 
   // One for loading the TOC anchor for the module that contains the called
   // function.
   SDValue TOCOff = DAG.getIntPtrConstant(TOCAnchorOffset, dl);
   SDValue AddTOC = DAG.getNode(ISD::ADD, dl, RegVT, Callee, TOCOff);
-  SDValue TOCPtr =
-      DAG.getLoad(RegVT, dl, LDChain, AddTOC,
-                  MPI.getWithOffset(TOCAnchorOffset), Alignment, MMOFlags);
-
-  // One for loading the environment pointer.
-  SDValue PtrOff = DAG.getIntPtrConstant(EnvPtrOffset, dl);
-  SDValue AddPtr = DAG.getNode(ISD::ADD, dl, RegVT, Callee, PtrOff);
-  SDValue LoadEnvPtr =
-      DAG.getLoad(RegVT, dl, LDChain, AddPtr,
-                  MPI.getWithOffset(EnvPtrOffset), Alignment, MMOFlags);
-
+  SDValue TOCPtr = LoadField(AddTOC, TOCAnchorOffset);
 
   // Then copy the newly loaded TOC anchor to the TOC pointer.
   SDValue TOCVal = DAG.getCopyToReg(Chain, dl, TOCReg, TOCPtr, Glue);
@@ -5710,7 +5717,11 @@ static void prepareDescriptorIndirectCall(SelectionDAG &DAG, SDValue &Callee,
   // place of the environment pointer.
   assert((!hasNest || !Subtarget.isAIXABI()) &&
          "Nest parameter is not supported on AIX.");
-  if (!hasNest) {
+  if (!hasNest && !IsCompact) {
+    // One for loading the environment pointer.
+    SDValue PtrOff = DAG.getIntPtrConstant(EnvPtrOffset, dl);
+    SDValue AddPtr = DAG.getNode(ISD::ADD, dl, RegVT, Callee, PtrOff);
+    SDValue LoadEnvPtr = LoadField(AddPtr, EnvPtrOffset);
     SDValue EnvVal = DAG.getCopyToReg(Chain, dl, EnvPtrReg, LoadEnvPtr, Glue);
     Chain = EnvVal.getValue(0);
     Glue = EnvVal.getValue(1);
@@ -5783,7 +5794,8 @@ buildCallOperands(SmallVectorImpl<SDValue> &Ops,
     }
 
     // Add the register used for the environment pointer.
-    if (Subtarget.usesFunctionDescriptors() && !CFlags.HasNest)
+    if (Subtarget.usesFunctionDescriptors() &&
+        !Subtarget.usesCompactFunctionDescriptors() && !CFlags.HasNest)
       Ops.push_back(DAG.getRegister(Subtarget.getEnvironmentPointerRegister(),
                                     RegVT));
 

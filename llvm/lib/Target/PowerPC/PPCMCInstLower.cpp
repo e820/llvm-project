@@ -170,12 +170,44 @@ static MCOperand GetSymbolRef(unsigned MIOpcode, const MachineOperand &MO,
   return MCOperand::createExpr(Expr);
 }
 
+MCSymbol *llvm::getLV2EntryPointSymbol(const MCSymbol *Descriptor,
+                                       MCContext &Ctx) {
+  return Ctx.getOrCreateSymbol(Twine(".") + Descriptor->getName());
+}
+
+/// Return true if operand 0 of \p MI is the target of a direct call that must
+/// branch to the callee's CellOS LV2 entry point instead of its descriptor.
+static bool callsLV2EntryPoint(const MachineInstr *MI) {
+  switch (MI->getOpcode()) {
+  case PPC::BL8:
+  case PPC::BL8_NOP:
+  case PPC::BL8_RM:
+  case PPC::BL8_NOP_RM:
+  case PPC::TAILB8:
+    break;
+  default:
+    return false;
+  }
+  const MachineOperand &MO = MI->getOperand(0);
+  return (MO.isGlobal() || MO.isSymbol()) &&
+         MI->getMF()
+             ->getSubtarget<PPCSubtarget>()
+             .usesCompactFunctionDescriptors();
+}
+
 void llvm::LowerPPCMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
                                         AsmPrinter &AP) {
   OutMI.setOpcode(MI->getOpcode());
 
   for (const MachineOperand &MO : MI->operands()) {
     MCOperand MCOp;
+    if (&MO == &MI->getOperand(0) && callsLV2EntryPoint(MI)) {
+      OutMI.addOperand(GetSymbolRef(
+          MI->getOpcode(), MO,
+          getLV2EntryPointSymbol(GetSymbolFromOperand(MO, AP), AP.OutContext),
+          AP));
+      continue;
+    }
     if (LowerPPCMachineOperandToMCOperand(MI->getOpcode(), MO, MCOp, AP))
       OutMI.addOperand(MCOp);
   }

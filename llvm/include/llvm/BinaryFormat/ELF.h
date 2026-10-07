@@ -371,6 +371,7 @@ enum {
   ELFOSABI_ARM_FDPIC = 65,     // ARM FDPIC
   ELFOSABI_C6000_ELFABI = 64,  // Bare-metal TMS320C6000
   ELFOSABI_C6000_LINUX = 65,   // Linux TMS320C6000
+  ELFOSABI_CELL_LV2 = 102,     // Sony CellOS Lv-2 (PS3 PPU)
   ELFOSABI_STANDALONE = 255,   // Standalone (embedded) application
   ELFOSABI_LAST_ARCH = 255     // Last Architecture-specific OS ABI
 };

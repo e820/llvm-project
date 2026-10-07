@@ -633,6 +633,10 @@ uint32_t PPC64::calcEFlags() const {
     else if (flag > 2)
       ErrAlways(ctx) << f << ": unrecognized e_flags: " << flag;
   }
+  // CellOS Lv-2 uses function descriptors but leaves the EF_PPC64_ABI bits
+  // clear; its loader expects e_flags to be 0.
+  if (ctx.arg.osabi == ELFOSABI_CELL_LV2)
+    return 0;
   return 2;
 }
 
