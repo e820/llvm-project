@@ -2042,9 +2042,16 @@ void PPCLinuxAsmPrinter::emitFunctionEntryLabel() {
     // CellOS LV2: an 8-byte descriptor {u32 entry, u32 TOC base} in .opd.
     // Code is entered through the ".foo" entry symbol, which direct calls
     // target, so the linker never has to look through the descriptor.
+    // A COMDAT function's descriptor joins the function's group, so the
+    // linker discards duplicate descriptors together with the duplicate code
+    // instead of leaving them pointing into a discarded section.
     MCSectionSubPair Current = OutStreamer->getCurrentSection();
+    const auto *TextSec = static_cast<const MCSectionELF *>(Current.first);
+    const MCSymbolELF *Group = TextSec->getGroup();
     OutStreamer->switchSection(OutContext.getELFSection(
-        ".opd", ELF::SHT_PROGBITS, ELF::SHF_WRITE | ELF::SHF_ALLOC));
+        ".opd", ELF::SHT_PROGBITS,
+        ELF::SHF_WRITE | ELF::SHF_ALLOC | (Group ? ELF::SHF_GROUP : 0), 0,
+        Group ? Group->getName() : "", TextSec->isComdat()));
     OutStreamer->emitValueToAlignment(Align(8));
     OutStreamer->emitLabel(CurrentFnSym);
     OutStreamer->emitValue(

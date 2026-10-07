@@ -4,6 +4,8 @@
 ; RUN: llc -verify-machineinstrs -mtriple=powerpc64-unknown-lv2 < %s | FileCheck %s
 ; RUN: llc -verify-machineinstrs -mtriple=powerpc64-unknown-lv2 -filetype=obj < %s | \
 ; RUN:   llvm-readobj -h -r - | FileCheck %s --check-prefix=OBJ
+; RUN: llc -verify-machineinstrs -mtriple=powerpc64-unknown-lv2 -filetype=obj < %s | \
+; RUN:   llvm-readobj --section-groups - | FileCheck %s --check-prefix=GROUP
 
 ; OBJ:      OS/ABI: 0x66
 ; OBJ:      Flags [ (0x0)
@@ -81,6 +83,30 @@ define i32 @tail(i32 %x) {
 ; CHECK-NEXT: .weakfn:
 define weak hidden void @weakfn() {
   ret void
+}
+
+; A COMDAT function's descriptor goes into an .opd section in the function's
+; group, so linkers discard duplicate descriptors with the duplicate code.
+; CHECK:      .section .text.inline_fn,"axG",@progbits,inline_fn,comdat
+; CHECK:      .section .opd,"awG",@progbits,inline_fn,comdat
+; CHECK-NEXT: .p2align 3
+; CHECK-NEXT: inline_fn:
+; CHECK-NEXT: .long .Lfunc_begin{{[0-9]+}}
+; CHECK-NEXT: .long .TOC.
+; CHECK-NEXT: .section .text.inline_fn,"axG",@progbits,inline_fn,comdat
+; CHECK-NEXT: .weak .inline_fn
+; CHECK-NEXT: .hidden .inline_fn
+
+; GROUP:      Signature: inline_fn
+; GROUP-NEXT: Section(s) in group [
+; GROUP-NEXT:   .text.inline_fn
+; GROUP-NEXT:   .opd
+; GROUP-NEXT:   .rela.opd
+; GROUP-NEXT: ]
+$inline_fn = comdat any
+define linkonce_odr hidden i32 @inline_fn(i32 %x) comdat {
+  %r = mul i32 %x, 3
+  ret i32 %r
 }
 
 ; Calls through an alias branch to the alias's entry symbol.
