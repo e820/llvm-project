@@ -1218,7 +1218,8 @@ static bool isSignedCharDefault(const llvm::Triple &Triple) {
 
   case llvm::Triple::ppc:
   case llvm::Triple::ppc64:
-    if (Triple.isOSDarwin())
+    // The CellOS Lv-2 PPU ABI makes plain char signed.
+    if (Triple.isOSDarwin() || Triple.getOS() == llvm::Triple::Lv2)
       return true;
     return false;
 

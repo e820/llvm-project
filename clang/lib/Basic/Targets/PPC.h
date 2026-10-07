@@ -462,7 +462,10 @@ public:
       ABI = "elfv1";
     }
 
-    if (Triple.isOSFreeBSD() || Triple.isOSOpenBSD() || Triple.isMusl()) {
+    // The CellOS Lv-2 PPU ABI does not support the extended precision format,
+    // so long double is IEEE double there, as on FreeBSD, OpenBSD and musl.
+    if (Triple.isOSFreeBSD() || Triple.isOSOpenBSD() || Triple.isMusl() ||
+        Triple.getOS() == llvm::Triple::Lv2) {
       LongDoubleWidth = LongDoubleAlign = 64;
       LongDoubleFormat = &llvm::APFloat::IEEEdouble();
     }

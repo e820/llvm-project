@@ -2,6 +2,9 @@
 // RUN:   FileCheck --check-prefix=FP64 %s
 // RUN: %clang_cc1 -triple powerpc64-linux-gnu -emit-llvm -o - %s -mlong-double-64 | \
 // RUN:   FileCheck --check-prefix=FP64 %s
+// The CellOS Lv-2 PPU ABI has no extended precision format.
+// RUN: %clang_cc1 -triple powerpc64-unknown-lv2 -emit-llvm -o - %s | \
+// RUN:   FileCheck --check-prefix=FP64 %s
 
 // musl defaults to -mlong-double-64, so -mlong-double-128 is needed to make
 // -mabi=ieeelongdouble effective.

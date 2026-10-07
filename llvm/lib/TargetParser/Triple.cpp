@@ -2573,7 +2573,7 @@ LongDoubleFormat Triple::getDefaultLongDoubleFormat() const {
     // PowerPC uses IBM double-double, except on a handful of OSes that use
     // plain IEEE double. NetBSD only switches to IEEE double on 32-bit PowerPC.
     if (isOSAIX() || isOSFreeBSD() || isOSOpenBSD() || isMusl() ||
-        (isOSNetBSD() && isPPC32()))
+        (isOSNetBSD() && isPPC32()) || getOS() == Lv2)
       return LongDoubleFormat::IEEEdouble;
     return LongDoubleFormat::PPCDoubleDouble;
   case x86:
